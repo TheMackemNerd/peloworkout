@@ -27,7 +27,7 @@ To enable Strava uploads:
 
 1. Create an API app in your Strava account at [strava.com/settings/api](https://www.strava.com/settings/api).
 2. Note your **Client ID** and **Client Secret**.
-3. In your cloned repo, create a file called `secrets.properties` in the project root and add:
+3. In your cloned repo, create a file called `secrets.properties` in the app directory and add:
 
    ```properties
    STRAVA_CLIENT_ID=XXX
