@@ -1,4 +1,3 @@
-**/secrets.properties
 .idea/
 *.iml
 .gradle/
@@ -6,3 +5,4 @@ app/build/
 captures/
 local.properties
 **/build/
+app/secrets.properties

@@ -8,6 +8,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -20,6 +23,7 @@ import com.digitalelysium.peloworkout.MainActivity
 import com.digitalelysium.peloworkout.strava.buildTcx
 import com.digitalelysium.peloworkout.ui.util.*
 import com.digitalelysium.peloworkout.ui.screen.components.*
+import com.digitalelysium.peloworkout.ui.theme.ThemeOption
 import com.digitalelysium.peloworkout.ui.workout.WorkoutSummary
 import com.digitalelysium.peloworkout.ui.workout.WorkoutViewModel
 
@@ -38,6 +42,8 @@ internal fun WorkoutScreen(
     connect: (BluetoothDevice, (() -> Unit)?) -> Unit,
     subscribe: (((ByteArray) -> Unit)?) -> Unit,
     resistancePercent: (Double) -> Double?,
+    currentThemeOption: ThemeOption,
+    onChangeTheme: (ThemeOption) -> Unit,
     vm: WorkoutViewModel = viewModel(factory = SimpleVmFactory { WorkoutViewModel(resistancePercent) })
 ) {
     val activity = LocalContext.current as MainActivity
@@ -98,8 +104,77 @@ internal fun WorkoutScreen(
             TopAppBar(
                 title = { Text(if (ui.connectedDeviceName == null) "Select Bike" else "Workout") },
                 actions = {
-                    TextButton(onClick = { activity.strava.startAuth() }) {
-                        Text(if (activity.strava.hasToken()) "Strava ✓" else "Connect Strava")
+                    var menuOpen by remember { mutableStateOf(false) }
+                    var themeMenuOpen by remember { mutableStateOf(false) }
+
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                    }
+
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false }
+                    ) {
+                        // Strava connect status
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (activity.strava.hasToken())
+                                        "Connected to Strava"
+                                    else
+                                        "Connect to Strava"
+                                )
+                            },
+                            onClick = {
+                                if (!activity.strava.hasToken()) {
+                                    activity.strava.startAuth()
+                                }
+                                menuOpen = false
+                            }
+                        )
+
+                        // Theme submenu
+                        DropdownMenuItem(
+                            text = { Text("Theme") },
+                            onClick = {
+                                // open nested theme menu
+                                themeMenuOpen = true
+                            }
+                        )
+                    }
+
+                    // Nested theme submenu
+                    DropdownMenu(
+                        expanded = themeMenuOpen,
+                        onDismissRequest = { themeMenuOpen = false }
+                    ) {
+                        val options = listOf(
+                            ThemeOption.System to "System default",
+                            ThemeOption.Light to "Light",
+                            ThemeOption.Dark to "Dark"
+                        )
+                        options.forEach { (opt, label) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row {
+                                        Text(label)
+                                        if (currentThemeOption == opt) {
+                                            Spacer(Modifier.width(8.dp))
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    onChangeTheme(opt)
+                                    themeMenuOpen = false
+                                    menuOpen = false
+                                }
+                            )
+                        }
                     }
                 }
             )

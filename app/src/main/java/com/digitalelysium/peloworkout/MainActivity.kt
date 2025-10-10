@@ -9,8 +9,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.lifecycle.lifecycleScope
+import com.digitalelysium.peloworkout.ui.theme.PeloworkoutTheme
+import com.digitalelysium.peloworkout.ui.theme.ThemeOption
+import com.digitalelysium.peloworkout.data.themeFlow
+import com.digitalelysium.peloworkout.data.setTheme
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.collectAsState
 import com.digitalelysium.peloworkout.ble.BleConnectionManager
 import com.digitalelysium.peloworkout.ble.BleScanner
 import com.digitalelysium.peloworkout.strava.StravaClient
@@ -52,20 +57,22 @@ class MainActivity : ComponentActivity() {
         intent?.data?.let { strava.handleRedirect(it) }
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            // read saved theme option (System/Light/Dark), default to System
+            val themeOpt = themeFlow(this).collectAsState(initial = ThemeOption.System).value
+
+            PeloworkoutTheme(option = themeOpt) {
                 WorkoutScreen(
                     requestPerms = { requestPerms() },
-                    scan = { cb ->
-                        val ok = ble.startScan(cb)
-                        if (!ok) requestPerms()
-                    },
+                    scan = { cb -> if (!ble.startScan(cb)) requestPerms() },
                     stopScan = { ble.stopScan() },
-                    connect = { device, onOk ->
-                        val ok = ble.connect(device, onOk)
-                        if (!ok) requestPerms()
-                    },
+                    connect = { device, onOk -> if (!ble.connect(device, onOk)) requestPerms() },
                     subscribe = { cb -> ble.subscribeIndoorBikeData(cb) },
-                    resistancePercent = { lvl -> ble.resistancePercent(lvl) }
+                    resistancePercent = { lvl -> ble.resistancePercent(lvl) },
+                    currentThemeOption = themeOpt,
+                    // new: let UI change the theme, persist via DataStore
+                    onChangeTheme = { opt ->
+                        lifecycleScope.launch { setTheme(this@MainActivity, opt) }
+                    }
                 )
             }
         }
