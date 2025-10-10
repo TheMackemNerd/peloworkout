@@ -4,9 +4,9 @@ A Kotlin/Jetpack Compose Android app for connecting to FTMS-enabled indoor bikes
 
 ## Screenshots
 
-![Bike Selector](docs/img1.png)
-![Workout screen](docs/img2.png)
-![Summary screen](docs/img3.png)
+![Bike Selector](app/docs/img1.png)
+![Workout screen](app/docs/img2.png)
+![Summary screen](app/docs/img3.png)
 
 ## Prerequisites
 

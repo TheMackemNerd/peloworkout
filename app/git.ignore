@@ -1,8 +1,0 @@
-**/secrets.properties
-.idea/
-*.iml
-.gradle/
-build/
-captures/
-local.properties
-**/build/
