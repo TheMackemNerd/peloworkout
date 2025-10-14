@@ -8,7 +8,7 @@ The app itself should work on any Android device (version 7+).
 
 ## Screenshots
 
-![Device Selector](app/docs/img4.png)
+![Device Selector](app/docs/img1.png)
 ![Workout screen](app/docs/img2.png)
 ![Summary screen](app/docs/img3.png)
 
