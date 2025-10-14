@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.max
+import kotlinx.coroutines.flow.Flow
 
 class WorkoutViewModel(
     // keep FTMS specifics out of UI; manager supplies this
@@ -31,13 +32,26 @@ class WorkoutViewModel(
     private var timerJob: Job? = null
     private val cadenceStaleMs = 2500L
     private val valueStaleMs = 5000L
+    private val hrStaleMs = 5000L
+
+    // heart rate
+    private var lastHr: Int? = null
+    private var lastHrAt = 0L
+    private val hrHoldMs = 3_000L   // was 5_000, this is the “anti-flicker” window
 
     fun setConnectedDeviceName(name: String?) {
         _ui.update { it.copy(connectedDeviceName = name) }
     }
 
-    fun setScanning(scanning: Boolean) {
-        _ui.update { it.copy(scanning = scanning) }
+    fun setHeartRateInstant(bpm: Int) {
+        lastHr = bpm
+        lastHrAt = android.os.SystemClock.elapsedRealtime()
+        // do NOT push ui.heartRate here; let the tick own it
+    }
+
+    fun clearHeartRateInstant() {
+        lastHr = null
+        lastHrAt = 0L
     }
 
     fun start() {
@@ -53,46 +67,58 @@ class WorkoutViewModel(
                 powerHistory = emptyList(),
                 speedHistory = emptyList(),
                 cadenceHistory = emptyList(),
+                heartRate = 0,
+                maxHr = 0,
+                heartHistory = emptyList(),
                 sessionStartEpochMs = System.currentTimeMillis()
             )
         }
         timerJob?.cancel()
         timerJob = viewModelScope.launch {
-            // local histories to avoid rebuilding lists every tick
             val powerHist = mutableListOf<Double>()
             val speedHist = mutableListOf<Double>()
             val cadenceHist = mutableListOf<Double>()
+            val hrHist = mutableListOf<Int?>()
+
             while (_ui.value.running && !_ui.value.paused) {
                 delay(1000)
 
                 val now = SystemClock.elapsedRealtime()
 
-                // stale handling
                 val cadence = when {
                     lastCadenceAt == 0L -> _ui.value.cadence
                     now - lastCadenceAt > cadenceStaleMs -> 0.0
                     else -> lastCadenceRpm ?: _ui.value.cadence
                 }
 
+                var power = lastPowerW
+                var speed = lastSpeedKph
+                if (lastPowerAt != 0L && now - lastPowerAt > valueStaleMs) power = null
+                if (lastSpeedAt != 0L && now - lastSpeedAt > valueStaleMs) speed = null
+
+                // heart rate staleness
+                val hr: Int? = if (lastHrAt != 0L && now - lastHrAt <= hrHoldMs) lastHr else null
+
+                var maxHrLocal = _ui.value.maxHr
+                if (hr != null) maxHrLocal = max(maxHrLocal, hr)
+
+                hrHist += hr
                 var distance = _ui.value.distanceKm
                 var totalKJ = _ui.value.totalKJ
                 var topPower = _ui.value.topPower
                 var topSpeed = _ui.value.topSpeed
-                var power = lastPowerW
-                var speed = lastSpeedKph
 
-                if (lastPowerAt != 0L && now - lastPowerAt > valueStaleMs) power = null
-                if (lastSpeedAt != 0L && now - lastSpeedAt > valueStaleMs) speed = null
 
-                // accumulate histories and totals
                 val pVal = (power ?: 0.0).also { totalKJ += it / 1000.0 }
                 val sVal = (speed ?: 0.0).also { distance += it / 3600.0 }
                 powerHist += pVal
                 speedHist += sVal
                 cadenceHist += (cadence ?: 0.0)
+                hrHist += hr
 
                 topPower = max(topPower, power ?: 0.0)
                 topSpeed = max(topSpeed, speed ?: 0.0)
+                if (hr != null) maxHrLocal = max(maxHrLocal, hr)
 
                 _ui.update {
                     it.copy(
@@ -100,13 +126,16 @@ class WorkoutViewModel(
                         power = power,
                         speed = speed,
                         cadence = cadence,
+                        heartRate = hr,
+                        maxHr = maxHrLocal,
                         distanceKm = distance,
                         totalKJ = totalKJ,
                         topPower = topPower,
                         topSpeed = topSpeed,
                         powerHistory = powerHist.toList(),
                         speedHistory = speedHist.toList(),
-                        cadenceHistory = cadenceHist.toList()
+                        cadenceHistory = cadenceHist.toList(),
+                        heartHistory = hrHist.toList()
                     )
                 }
             }

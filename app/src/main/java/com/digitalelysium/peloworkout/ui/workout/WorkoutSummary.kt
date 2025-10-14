@@ -11,5 +11,6 @@ data class WorkoutSummary(
     val startEpochMs: Long,
     val powerHistory: List<Double>,
     val speedHistory: List<Double>,
-    val cadenceHistory: List<Double>
+    val cadenceHistory: List<Double>,
+    val heartHistory: List<Int?>
 )

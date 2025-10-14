@@ -9,7 +9,8 @@ fun buildTcx(
     startEpochMs: Long,
     power: List<Double>,
     speedKph: List<Double>,
-    cadenceRpm: List<Double>
+    cadenceRpm: List<Double>,
+    heartBpm: List<Int?>? = null
 ): ByteArray {
     val startIso = Instant.ofEpochMilli(startEpochMs).toString()
     val sb = StringBuilder()
@@ -36,9 +37,13 @@ fun buildTcx(
         accMeters += sp / 3.6
         val cad = cadenceRpm.getOrNull(i)?.toInt() ?: 0
         val w = power.getOrNull(i)?.toInt() ?: 0
+        val hr = heartBpm?.getOrNull(i)?.takeIf { it > 0 }
 
         sb.append("<Trackpoint><Time>$t</Time>")
         sb.append("<DistanceMeters>${"%.1f".format(Locale.UK, accMeters)}</DistanceMeters>")
+        if (hr != null) {
+            sb.appendLine("    <HeartRateBpm><Value>$hr</Value></HeartRateBpm>")
+        }
         if (cad > 0) sb.append("<Cadence>$cad</Cadence>")
         sb.append("<Extensions><ns3:TPX><ns3:Watts>$w</ns3:Watts></ns3:TPX></Extensions>")
         sb.append("</Trackpoint>")

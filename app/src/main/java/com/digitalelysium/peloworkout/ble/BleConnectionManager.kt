@@ -10,6 +10,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import com.digitalelysium.peloworkout.util.hasScanPerm
 import com.digitalelysium.peloworkout.util.hasConnectPerm
+import com.digitalelysium.peloworkout.ble.HrUuids
+import com.digitalelysium.peloworkout.ble.parseHrMeasurement
 
 class BleConnectionManager(
     context: Context,
@@ -17,7 +19,8 @@ class BleConnectionManager(
 ) {
     private val appCtx = context.applicationContext
 
-    private var gatt: BluetoothGatt? = null
+    private var bikeGatt: BluetoothGatt? = null
+    private var hrGatt: BluetoothGatt? = null
 
     // resistance range cache
     var resMin: Int? = null; private set
@@ -25,6 +28,7 @@ class BleConnectionManager(
     var resStep: Int? = null; private set
 
     private var onBikeData: ((ByteArray) -> Unit)? = null
+    private var onHrBpm: ((Int) -> Unit)? = null
 
     fun startScan(onDevice: (ScanResult) -> Unit): Boolean {
         if (!appCtx.hasScanPerm()) return false
@@ -38,19 +42,34 @@ class BleConnectionManager(
 
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice, onConnected: (() -> Unit)? = null): Boolean {
+        // treat as BIKE connect (keeps your existing call sites working)
         if (!appCtx.hasConnectPerm()) return false
-        gatt = device.connectGatt(appCtx, false, callback)
-        this.onConnected = onConnected
+        bikeGatt = device.connectGatt(appCtx, false, bikeCallback)
+        this.onBikeConnected = onConnected
         return true
     }
+
+    // + explicit HR connect
+    @SuppressLint("MissingPermission")
+    fun connectHr(device: BluetoothDevice, onConnected: (() -> Unit)? = null): Boolean {
+        if (!appCtx.hasConnectPerm()) return false
+        hrGatt = device.connectGatt(appCtx, false, hrCallback)
+        this.onHrConnected = onConnected
+        return true
+    }
+
+    private var onBikeConnected: (() -> Unit)? = null
+    private var onHrConnected: (() -> Unit)? = null
 
     fun subscribeIndoorBikeData(cb: ((ByteArray) -> Unit)?) {
         onBikeData = cb
     }
 
-    private var onConnected: (() -> Unit)? = null
+    fun subscribeHeartRate(cb: ((Int) -> Unit)?) {
+        onHrBpm = cb
+    }
 
-    private val callback = object : BluetoothGattCallback() {
+    private val bikeCallback  = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
@@ -90,7 +109,7 @@ class BleConnectionManager(
                 ?.getCharacteristic(FtmsUuids.SUPPORTED_RESISTANCE_RANGE)
                 ?.let { g.readCharacteristic(it) }
 
-            onConnected?.invoke()
+            onBikeConnected?.invoke()
         }
 
         override fun onCharacteristicRead(
@@ -133,6 +152,39 @@ class BleConnectionManager(
             value: ByteArray
         ) {
             if (ch.uuid == FtmsUuids.INDOOR_BIKE_DATA) onBikeData?.invoke(value)
+        }
+    }
+
+    private val hrCallback = object : BluetoothGattCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) g.discoverServices()
+            else if (newState == BluetoothProfile.STATE_DISCONNECTED) try { g.close() } catch (_: Exception) {}
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            val ch = g.getService(HrUuids.HRS_SERVICE)?.getCharacteristic(HrUuids.HR_MEASUREMENT) ?: return
+            try {
+                g.setCharacteristicNotification(ch, true)
+                val cccd = ch.getDescriptor(HrUuids.CCC_DESC) ?: return
+                val enableValue = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) g.writeDescriptor(cccd, enableValue)
+                else @Suppress("DEPRECATION") run { cccd.value = enableValue; g.writeDescriptor(cccd) }
+            } catch (_: SecurityException) {}
+            onHrConnected?.invoke()
+        }
+
+        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
+            if (ch.uuid == HrUuids.HR_MEASUREMENT) {
+                @Suppress("DEPRECATION")
+                parseHrMeasurement(ch.value ?: return)?.let { onHrBpm?.invoke(it) }
+            }
+        }
+
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic, value: ByteArray) {
+            if (ch.uuid == HrUuids.HR_MEASUREMENT) parseHrMeasurement(value)?.let { onHrBpm?.invoke(it) }
         }
     }
 

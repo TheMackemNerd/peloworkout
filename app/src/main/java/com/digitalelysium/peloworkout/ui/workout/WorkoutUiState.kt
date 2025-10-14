@@ -23,5 +23,9 @@ data class WorkoutUiState(
     val powerHistory: List<Double> = emptyList(),
     val speedHistory: List<Double> = emptyList(),
     val cadenceHistory: List<Double> = emptyList(),
-    val sessionStartEpochMs: Long = 0L
+    val sessionStartEpochMs: Long = 0L,
+
+    val heartRate: Int? = null,              // null when unknown/stale
+    val maxHr: Int = 0,
+    val heartHistory: List<Int?> = emptyList()
 )

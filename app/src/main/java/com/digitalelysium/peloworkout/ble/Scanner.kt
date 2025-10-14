@@ -25,6 +25,13 @@ object BleScanConfig {
                 .build()
         )
 
+    fun hrsFilters(): List<ScanFilter> =
+        listOf(
+            ScanFilter.Builder()
+                .setServiceUuid(ParcelUuid(HrUuids.HRS_SERVICE))
+                .build()
+        )
+
     fun lowLatencySettings(): ScanSettings =
         ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -46,7 +53,8 @@ class BleScanner(private val scanner: BluetoothLeScanner?) {
             }
         }
         callback = cb
-        scanner?.startScan(BleScanConfig.ftmsFilters(), BleScanConfig.lowLatencySettings(), cb)
+        val filters = BleScanConfig.ftmsFilters() + BleScanConfig.hrsFilters()
+        scanner?.startScan(filters, BleScanConfig.lowLatencySettings(), cb)
     }
 
     @SuppressLint("MissingPermission")
@@ -55,5 +63,14 @@ class BleScanner(private val scanner: BluetoothLeScanner?) {
             try { scanner?.stopScan(cb) } catch (_: SecurityException) {}
         }
         callback = null
+    }
+}
+
+fun classifyDeviceKind(r: ScanResult): DeviceKind {
+    val uuids = r.scanRecord?.serviceUuids?.map { it.uuid } ?: emptyList()
+    return when {
+        uuids.contains(FtmsUuids.FTMS_SERVICE) -> DeviceKind.Bike
+        uuids.contains(HrUuids.HRS_SERVICE) -> DeviceKind.HeartRate
+        else -> DeviceKind.Unknown
     }
 }

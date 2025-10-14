@@ -8,7 +8,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
@@ -26,6 +25,17 @@ import com.digitalelysium.peloworkout.ui.screen.components.*
 import com.digitalelysium.peloworkout.ui.theme.ThemeOption
 import com.digitalelysium.peloworkout.ui.workout.WorkoutSummary
 import com.digitalelysium.peloworkout.ui.workout.WorkoutViewModel
+import com.digitalelysium.peloworkout.ble.*
+import androidx.compose.animation.core.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.scale
+import com.digitalelysium.peloworkout.data.Gender
+import com.digitalelysium.peloworkout.data.UserPrefs
+import com.digitalelysium.peloworkout.data.UserProfile
+import kotlinx.coroutines.launch
 
 class SimpleVmFactory<T : ViewModel>(private val create: () -> T) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
@@ -44,6 +54,8 @@ internal fun WorkoutScreen(
     resistancePercent: (Double) -> Double?,
     currentThemeOption: ThemeOption,
     onChangeTheme: (ThemeOption) -> Unit,
+    connectHr: (BluetoothDevice, (() -> Unit)?) -> Unit,
+    subscribeHr: (((Int) -> Unit)?) -> Unit,
     vm: WorkoutViewModel = viewModel(factory = SimpleVmFactory { WorkoutViewModel(resistancePercent) })
 ) {
     val activity = LocalContext.current as MainActivity
@@ -51,6 +63,12 @@ internal fun WorkoutScreen(
     val view = LocalView.current
 
     val ui by vm.ui.collectAsState()
+
+    val profile by remember(ctx) {
+        UserPrefs.profileFlow(ctx)
+    }.collectAsState(initial = UserProfile(null, null, Gender.Unspecified))
+
+    var showProfile by remember { mutableStateOf(false) }
 
     var showSummary by rememberSaveable { mutableStateOf(false) }
     var summary by remember { mutableStateOf<WorkoutSummary?>(null) }
@@ -67,7 +85,8 @@ internal fun WorkoutScreen(
                             startEpochMs = s.startEpochMs,
                             power = s.powerHistory,
                             speedKph = s.speedHistory,
-                            cadenceRpm = s.cadenceHistory
+                            cadenceRpm = s.cadenceHistory,
+                            heartBpm = s.heartHistory
                         )
                         activity.strava.uploadTcx(token, tcx, title)
                         android.widget.Toast
@@ -115,6 +134,12 @@ internal fun WorkoutScreen(
                         expanded = menuOpen,
                         onDismissRequest = { menuOpen = false }
                     ) {
+
+                        DropdownMenuItem(
+                            text = { Text("User profile") },
+                            onClick = { showProfile = true; menuOpen = false }
+                        )
+
                         // Strava connect status
                         DropdownMenuItem(
                             text = {
@@ -199,7 +224,7 @@ internal fun WorkoutScreen(
                                 vm.stop()
                                 val uiSnap = ui
                                 val avgPower = if (uiSnap.elapsed > 0) (uiSnap.totalKJ * 1000.0 / uiSnap.elapsed) else 0.0
-                                val kcal = (uiSnap.totalKJ / 0.24) / 4.184
+                                val kcal = CalorieCalculation(uiSnap.totalKJ, uiSnap.heartHistory, profile)
 
                                 summary = WorkoutSummary(
                                     elapsed = uiSnap.elapsed,
@@ -212,7 +237,8 @@ internal fun WorkoutScreen(
                                     startEpochMs = uiSnap.sessionStartEpochMs,
                                     powerHistory = uiSnap.powerHistory,
                                     speedHistory = uiSnap.speedHistory,
-                                    cadenceHistory = uiSnap.cadenceHistory
+                                    cadenceHistory = uiSnap.cadenceHistory,
+                                    heartHistory = uiSnap.heartHistory
                                 )
                                 showSummary = true
                             },
@@ -228,7 +254,7 @@ internal fun WorkoutScreen(
                                 vm.stop()
                                 val uiSnap = ui
                                 val avgPower = if (uiSnap.elapsed > 0) (uiSnap.totalKJ * 1000.0 / uiSnap.elapsed) else 0.0
-                                val kcal = (uiSnap.totalKJ / 0.24) / 4.184
+                                val kcal = CalorieCalculation(uiSnap.totalKJ, uiSnap.heartHistory, profile)
 
                                 summary = WorkoutSummary(
                                     elapsed = uiSnap.elapsed,
@@ -241,7 +267,8 @@ internal fun WorkoutScreen(
                                     startEpochMs = uiSnap.sessionStartEpochMs,
                                     powerHistory = uiSnap.powerHistory,
                                     speedHistory = uiSnap.speedHistory,
-                                    cadenceHistory = uiSnap.cadenceHistory
+                                    cadenceHistory = uiSnap.cadenceHistory,
+                                    heartHistory = uiSnap.heartHistory
                                 )
                                 showSummary = true
                             },
@@ -255,52 +282,153 @@ internal fun WorkoutScreen(
         }
     ) { pad ->
         Column(Modifier.padding(pad).padding(12.dp).fillMaxSize()) {
-            Text(formatElapsed(ui.elapsed), style = MaterialTheme.typography.headlineMedium)
+// Timer + Heart Rate row
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(formatElapsed(ui.elapsed), style = MaterialTheme.typography.headlineMedium)
+
+                val hr = ui.heartRate
+                val pulse = rememberInfiniteTransition()
+                val scale by pulse.animateFloat(
+                    initialValue = 1f, targetValue = 1.2f,
+                    animationSpec = infiniteRepeatable(tween(550), RepeatMode.Reverse)
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Favorite,
+                        contentDescription = "Heart",
+                        modifier = Modifier.scale(if (hr != null) scale else 1f),
+                        tint = if (hr != null) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(text = hr?.toString() ?: "--", style = MaterialTheme.typography.titleMedium)
+                }
+            }
             Spacer(Modifier.height(8.dp))
 
-            var devices by remember { mutableStateOf(listOf<ScanResult>()) }
-            var scanning by remember { mutableStateOf(false) }
-
             if (ui.connectedDeviceName == null) {
+                var devices by remember { mutableStateOf(listOf<ScanResult>()) }
+                var scanning by remember { mutableStateOf(false) }
+                val selected = remember { mutableStateListOf<String>() } // MACs
+
+                // top row: Find Devices / Stop
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        devices = emptyList()
-                        requestPerms()
-                        scanning = true
-                        scan { res ->
-                            if (devices.none { it.device.address == res.device.address }) {
-                                devices = devices + res
+                    Button(
+                        onClick = {
+                            devices = emptyList()
+                            selected.clear()
+                            requestPerms()
+                            scanning = true
+                            scan { res ->
+                                val mac = res.device.address
+                                // only keep devices we care about
+                                val kind = classifyDeviceKind(res)
+                                if (kind != DeviceKind.Unknown && devices.none { it.device.address == mac }) {
+                                    devices = devices + res
+                                }
                             }
-                        }
-                    }, enabled = !scanning) {
-                        Text("Scan for Bike")
+                        },
+                        enabled = !scanning
+                    ) {
+                        Text("Find Devices")
                         if (scanning) {
                             Spacer(Modifier.width(8.dp))
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                         }
                     }
-                    OutlinedButton(onClick = { stopScan(); scanning = false }) { Text("Stop scan") }
+                    OutlinedButton(onClick = { stopScan(); scanning = false }) { Text("Stop") }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                LazyColumn {
+                Spacer(Modifier.height(12.dp))
+
+                if (scanning) {
+                    // Info box
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        tonalElevation = 1.dp,
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Text(
+                            "Pick one fitness machine and optionally one heart rate monitor, then tap Connect to Devices.",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                // devices list with checkboxes
+                LazyColumn(Modifier.weight(1f, fill = false)) {
                     items(items = devices, key = { it.device.address }) { r ->
+                        val kind = classifyDeviceKind(r)
+                        if (kind == DeviceKind.Unknown) return@items
+                        val mac = r.device.address
+                        val name = r.device.name ?: mac
+                        val typeLabel = if (kind == DeviceKind.Bike) "Bike" else "Heart Rate"
+                        val checked = mac in selected
+
                         ListItem(
-                            headlineContent = { Text(r.device.name ?: r.device.address) },
-                            supportingContent = { Text(r.device.address) },
+                            leadingContent = {
+                                if (kind == DeviceKind.Bike)
+                                    Icon(Icons.AutoMirrored.Filled.DirectionsBike, contentDescription = null)
+                                else
+                                    Icon(Icons.Filled.Favorite, contentDescription = null)
+                            },
+                            headlineContent = { Text("$name ($typeLabel)") },
+                            supportingContent = { Text(mac) },
                             trailingContent = {
-                                TextButton(onClick = {
-                                    stopScan(); scanning = false
-                                    connect(r.device) {
-                                        vm.setConnectedDeviceName(r.device.name ?: r.device.address)
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { on ->
+                                        if (on) {
+                                            // if ticking a Bike and another Bike already ticked, untick previous
+                                            if (kind == DeviceKind.Bike) {
+                                                val firstBikeMac = devices.firstOrNull {
+                                                    classifyDeviceKind(it) == DeviceKind.Bike && it.device.address in selected
+                                                }?.device?.address
+                                                if (firstBikeMac != null) selected.remove(firstBikeMac)
+                                            }
+                                            selected.add(mac)
+                                        } else {
+                                            selected.remove(mac)
+                                        }
                                     }
-                                }) { Text("Connect") }
+                                )
                             }
                         )
                         HorizontalDivider()
                     }
                 }
-            } else {
+
+                // Connect button
+                val selectedBike = devices.firstOrNull { classifyDeviceKind(it) == DeviceKind.Bike && it.device.address in selected }?.device
+                val selectedHr = devices.firstOrNull { classifyDeviceKind(it) == DeviceKind.HeartRate && it.device.address in selected }?.device
+                val canConnect = selectedBike != null
+
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        stopScan(); scanning = false
+                        // connect bike (existing route)
+                        connect(selectedBike!!) {
+                            vm.setConnectedDeviceName(selectedBike.name ?: selectedBike.address)
+                        }
+                        // optional HR
+                        selectedHr?.let { d ->
+                            connectHr(d) {}      // <-- you’ll add this param from MainActivity
+                            subscribeHr { bpm -> // <-- and this
+                                vm.setHeartRateInstant(bpm)
+                            }
+                        }
+                    },
+                    enabled = canConnect,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Connect to Devices")
+                }
+            }
+            else {
                 NineTileGrid(
                     cadence = ui.cadence,
                     power = ui.power,
@@ -311,7 +439,7 @@ internal fun WorkoutScreen(
                     totalKJ = ui.totalKJ,
                     peakPower = ui.topPower,
                     peakSpeed = ui.topSpeed,
-                    calories = (ui.totalKJ / 0.24) / 4.184
+                    calories = CalorieCalculation(ui.totalKJ, ui.heartHistory, profile)
                 )
                 Spacer(Modifier.height(20.dp))
                 PowerGraph(
@@ -323,5 +451,20 @@ internal fun WorkoutScreen(
                 Spacer(Modifier.height(20.dp))
             }
         }
+
+    }
+
+    if (showProfile) {
+        val scope = rememberCoroutineScope()
+        UserProfileDialog(
+            initial = profile,
+            onDismiss = { showProfile = false },
+            onSave = { updated ->
+                scope.launch {
+                    UserPrefs.save(ctx, updated)
+                }
+                showProfile = false
+            }
+        )
     }
 }

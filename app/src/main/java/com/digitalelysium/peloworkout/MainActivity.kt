@@ -9,17 +9,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.lifecycle.lifecycleScope
-import com.digitalelysium.peloworkout.ui.theme.PeloworkoutTheme
-import com.digitalelysium.peloworkout.ui.theme.ThemeOption
-import com.digitalelysium.peloworkout.data.themeFlow
-import com.digitalelysium.peloworkout.data.setTheme
-import kotlinx.coroutines.launch
 import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.lifecycleScope
 import com.digitalelysium.peloworkout.ble.BleConnectionManager
 import com.digitalelysium.peloworkout.ble.BleScanner
+import com.digitalelysium.peloworkout.data.setTheme
+import com.digitalelysium.peloworkout.data.themeFlow
 import com.digitalelysium.peloworkout.strava.StravaClient
 import com.digitalelysium.peloworkout.ui.screen.WorkoutScreen
+import com.digitalelysium.peloworkout.ui.theme.PeloworkoutTheme
+import com.digitalelysium.peloworkout.ui.theme.ThemeOption
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -69,6 +69,8 @@ class MainActivity : ComponentActivity() {
                     subscribe = { cb -> ble.subscribeIndoorBikeData(cb) },
                     resistancePercent = { lvl -> ble.resistancePercent(lvl) },
                     currentThemeOption = themeOpt,
+                    connectHr = { d, onOk -> if (!ble.connectHr(d, onOk)) requestPerms() },
+                    subscribeHr = { cb -> ble.subscribeHeartRate(cb) },
                     // new: let UI change the theme, persist via DataStore
                     onChangeTheme = { opt ->
                         lifecycleScope.launch { setTheme(this@MainActivity, opt) }
