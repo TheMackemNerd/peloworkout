@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.max
+import kotlinx.coroutines.isActive
+
 import kotlinx.coroutines.flow.Flow
 
 class WorkoutViewModel(
@@ -67,88 +69,31 @@ class WorkoutViewModel(
                 powerHistory = emptyList(),
                 speedHistory = emptyList(),
                 cadenceHistory = emptyList(),
-                heartRate = 0,
-                maxHr = 0,
                 heartHistory = emptyList(),
                 sessionStartEpochMs = System.currentTimeMillis()
             )
         }
-        timerJob?.cancel()
-        timerJob = viewModelScope.launch {
-            val powerHist = mutableListOf<Double>()
-            val speedHist = mutableListOf<Double>()
-            val cadenceHist = mutableListOf<Double>()
-            val hrHist = mutableListOf<Int?>()
-
-            while (_ui.value.running && !_ui.value.paused) {
-                delay(1000)
-
-                val now = SystemClock.elapsedRealtime()
-
-                val cadence = when {
-                    lastCadenceAt == 0L -> _ui.value.cadence
-                    now - lastCadenceAt > cadenceStaleMs -> 0.0
-                    else -> lastCadenceRpm ?: _ui.value.cadence
-                }
-
-                var power = lastPowerW
-                var speed = lastSpeedKph
-                if (lastPowerAt != 0L && now - lastPowerAt > valueStaleMs) power = null
-                if (lastSpeedAt != 0L && now - lastSpeedAt > valueStaleMs) speed = null
-
-                // heart rate staleness
-                val hr: Int? = if (lastHrAt != 0L && now - lastHrAt <= hrHoldMs) lastHr else null
-
-                var maxHrLocal = _ui.value.maxHr
-                if (hr != null) maxHrLocal = max(maxHrLocal, hr)
-
-                hrHist += hr
-                var distance = _ui.value.distanceKm
-                var totalKJ = _ui.value.totalKJ
-                var topPower = _ui.value.topPower
-                var topSpeed = _ui.value.topSpeed
-
-
-                val pVal = (power ?: 0.0).also { totalKJ += it / 1000.0 }
-                val sVal = (speed ?: 0.0).also { distance += it / 3600.0 }
-                powerHist += pVal
-                speedHist += sVal
-                cadenceHist += (cadence ?: 0.0)
-                hrHist += hr
-
-                topPower = max(topPower, power ?: 0.0)
-                topSpeed = max(topSpeed, speed ?: 0.0)
-                if (hr != null) maxHrLocal = max(maxHrLocal, hr)
-
-                _ui.update {
-                    it.copy(
-                        elapsed = it.elapsed + 1,
-                        power = power,
-                        speed = speed,
-                        cadence = cadence,
-                        heartRate = hr,
-                        maxHr = maxHrLocal,
-                        distanceKm = distance,
-                        totalKJ = totalKJ,
-                        topPower = topPower,
-                        topSpeed = topSpeed,
-                        powerHistory = powerHist.toList(),
-                        speedHistory = speedHist.toList(),
-                        cadenceHistory = cadenceHist.toList(),
-                        heartHistory = hrHist.toList()
-                    )
-                }
-            }
-        }
+        startTicker()
     }
 
-    fun pause() { _ui.update { it.copy(paused = true) } }
-    fun resume() { _ui.update { it.copy(paused = false) }; start() /* restart ticking */ }
+    fun pause() {
+        _ui.update { it.copy(paused = true) }
+        // keep timerJob running; it skips ticks while paused
+        // or, if you prefer: timerJob?.cancel() and restartTicker() in resume()
+    }
 
     fun stop() {
         timerJob?.cancel()
+        timerJob = null
         _ui.update { it.copy(running = false, paused = false) }
     }
+
+    fun resume() {
+        if (!_ui.value.running) return  // guard: resume only if a session exists
+        _ui.update { it.copy(paused = false) }
+        if (timerJob == null || !timerJob!!.isActive) startTicker()
+    }
+
 
     // Called by BLE subscription
     fun onBike(bytes: ByteArray) {
@@ -177,4 +122,76 @@ class WorkoutViewModel(
             }
         }
     }
+
+    private fun startTicker() {
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            // take current histories so we append, not restart
+            val powerHist = _ui.value.powerHistory.toMutableList()
+            val speedHist = _ui.value.speedHistory.toMutableList()
+            val cadenceHist = _ui.value.cadenceHistory.toMutableList()
+            val hrHist = _ui.value.heartHistory.toMutableList()
+
+            while (isActive) {
+                delay(1000)
+
+                val state = _ui.value
+                if (!state.running || state.paused) continue
+
+                val now = android.os.SystemClock.elapsedRealtime()
+
+                // cadence staleness (your existing logic)
+                val cadence = when {
+                    lastCadenceAt == 0L -> state.cadence
+                    now - lastCadenceAt > cadenceStaleMs -> 0.0
+                    else -> lastCadenceRpm ?: state.cadence
+                }
+
+                var power = lastPowerW
+                var speed = lastSpeedKph
+                if (lastPowerAt != 0L && now - lastPowerAt > valueStaleMs) power = null
+                if (lastSpeedAt != 0L && now - lastSpeedAt > valueStaleMs) speed = null
+
+                // HR hold (anti-flicker)
+                val hr: Int? = if (lastHrAt != 0L && now - lastHrAt <= hrHoldMs) lastHr else null
+
+                var distance = state.distanceKm
+                var totalKJ  = state.totalKJ
+                var topPower = state.topPower
+                var topSpeed = state.topSpeed
+                var maxHr    = state.maxHr
+
+                val pVal = (power ?: 0.0).also { totalKJ += it / 1000.0 }
+                val sVal = (speed ?: 0.0).also { distance += it / 3600.0 }
+                powerHist += pVal
+                speedHist += sVal
+                cadenceHist += (cadence ?: 0.0)
+                hrHist += hr
+
+                topPower = kotlin.math.max(topPower, power ?: 0.0)
+                topSpeed = kotlin.math.max(topSpeed, speed ?: 0.0)
+                if (hr != null) maxHr = kotlin.math.max(maxHr, hr)
+
+                _ui.update {
+                    it.copy(
+                        elapsed = it.elapsed + 1,
+                        power = power,
+                        speed = speed,
+                        cadence = cadence,
+                        heartRate = hr,
+                        maxHr = maxHr,
+                        distanceKm = distance,
+                        totalKJ = totalKJ,
+                        topPower = topPower,
+                        topSpeed = topSpeed,
+                        powerHistory = powerHist.toList(),
+                        speedHistory = speedHist.toList(),
+                        cadenceHistory = cadenceHist.toList(),
+                        heartHistory = hrHist.toList()
+                    )
+                }
+            }
+        }
+    }
+
 }
